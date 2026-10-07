@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# Actualiza los módulos instalados cuyo código cambió (click-odoo-update compara
+# un checksum por módulo; la primera vez actualiza todos).
+#
+# Uso: odoo-update [opciones de click-odoo-update]   p. ej. --update-all, --list-only
+set -euo pipefail
+source odoo-lib
+
+db=${DB_NAME:?falta DB_NAME}
+wait-for-db
+db-initialized "$db" || die "La base '$db' no está inicializada. Ejecuta odoo-init primero."
+
+log "Actualizando módulos modificados en '$db'..."
+run-checked click-odoo-update -c "$ODOO_RC" -d "$db" "$@"
+log 'Listo.'

@@ -1,0 +1,32 @@
+# shellcheck shell=bash
+# Funciones comunes de los scripts odoo-*. Se carga con: source odoo-lib
+
+log() {
+    printf '[%s] %s\n' "$(basename "$0")" "$*" >&2
+}
+
+die() {
+    log "ERROR: $*"
+    exit 1
+}
+
+# db-initialized <db>: éxito si la base existe y tiene las tablas de Odoo.
+db-initialized() {
+    local result
+    result=$(psql -d "$1" -tAc "SELECT 1 FROM information_schema.tables WHERE table_name = 'ir_module_module'" 2>/dev/null || true)
+    [[ "$result" == '1' ]]
+}
+
+# run-checked <comando...>: ejecuta el comando y falla si el código de salida
+# no es 0 o si el log contiene líneas ERROR/CRITICAL (Odoo a veces registra
+# errores de módulos sin terminar con un código distinto de 0).
+run-checked() {
+    local logfile rc=0
+    logfile=$(mktemp)
+    "$@" 2>&1 | tee "$logfile" || rc=$?
+    if (( rc != 0 )) || grep -qE '^[0-9-]+ [0-9:,]+ [0-9]+ (ERROR|CRITICAL) ' "$logfile"; then
+        rm -f "$logfile"
+        die "el comando terminó con errores (rc=$rc). Revisa el log de arriba."
+    fi
+    rm -f "$logfile"
+}

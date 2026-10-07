@@ -1,0 +1,2 @@
+# Dependencias Python adicionales que no estén en el requirements.txt de los repos.
+# Fija versiones (paquete==x.y.z) para que los builds sean reproducibles.

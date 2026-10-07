@@ -1,0 +1,18 @@
+# Repos de addons que se descargan al construir la imagen.
+#
+# Formato (una línea por repo, columnas separadas por espacios):
+#   <url https>   [rama]   [commit]
+#
+#   - rama:   opcional; por defecto es la versión de Odoo (20.0).
+#   - commit: opcional; fija el repo a un commit exacto (recomendado en producción
+#             para que dos builds den el mismo resultado).
+#
+# Los repos privados usan el token de GitHub (secrets/github_token).
+# OJO: si un repo depende de módulos de otro repo (muy común en OCA), ese otro
+# repo también tiene que estar en la lista.
+#
+# Ejemplos:
+# https://github.com/OCA/server-ux        20.0
+# https://github.com/OCA/web              20.0   046ebfeb332b2c80be491bc860e790bb9c5b3e6d
+# https://github.com/OCA/l10n-peru        20.0
+# https://github.com/Dfunn1k/odoo-addons  20.0

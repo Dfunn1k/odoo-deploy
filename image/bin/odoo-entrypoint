@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# Punto de entrada: genera odoo.conf, espera a Postgres y arranca el comando.
+#   odoo [args]   -> servidor Odoo (por defecto)
+#   -<flag> ...   -> servidor Odoo con esos flags
+#   <otro>        -> se ejecuta tal cual (odoo-init, odoo-update, bash, ...)
+set -euo pipefail
+
+odoo-render-config
+
+case "${1:-odoo}" in
+    odoo)
+        shift || true
+        wait-for-db
+        exec odoo "$@"
+        ;;
+    -*)
+        wait-for-db
+        exec odoo "$@"
+        ;;
+    *)
+        exec "$@"
+        ;;
+esac

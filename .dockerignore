@@ -1,0 +1,4 @@
+# El build solo necesita la imagen y los addons. Nada de .env ni secrets/ en el contexto.
+*
+!image/
+!addons/

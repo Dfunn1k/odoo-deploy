@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# Instala módulos en la base de producción.
+# Uso: odoo-install modulo1,modulo2
+set -euo pipefail
+source odoo-lib
+
+[[ -n "${1:-}" ]] || die 'Uso: odoo-install modulo1,modulo2'
+db=${DB_NAME:?falta DB_NAME}
+wait-for-db
+db-initialized "$db" || die "La base '$db' no está inicializada. Ejecuta odoo-init primero."
+
+log "Instalando $1 en '$db'..."
+run-checked odoo -d "$db" -i "$1" --stop-after-init --no-http
+log 'Listo.'

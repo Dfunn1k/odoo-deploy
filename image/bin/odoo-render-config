@@ -1,0 +1,166 @@
+#!/usr/bin/env python3
+"""Genera el odoo.conf ($ODOO_RC) a partir de variables de entorno.
+
+Los valores por defecto siguen la guía oficial de despliegue de Odoo 20
+("System configuration"). Cualquier opción que no esté aquí se puede pasar con
+ODOO_OPT_<opcion>=<valor>, por ejemplo ODOO_OPT_LIMIT_TIME_REAL_CRON=3600.
+"""
+import os
+import re
+import sys
+
+MIB = 1024 * 1024
+ADDONS_ROOT = os.environ.get('ODOO_ADDONS_ROOT', '/opt/odoo-addons')
+EXTRA_ADDONS = '/mnt/extra-addons'
+WEAK_PASSWORDS = {'admin', 'odoo', 'password', 'changeme'}
+
+
+def info(message):
+    print(f'[odoo-render-config] {message}', file=sys.stderr)
+
+
+def die(message):
+    info(f'ERROR: {message}')
+    sys.exit(1)
+
+
+def env(name, default=''):
+    value = os.environ.get(name, '').strip()
+    return value or default
+
+
+def required(name):
+    value = env(name)
+    if not value:
+        die(f'falta la variable {name}')
+    return value
+
+
+def available_cpus():
+    try:
+        with open('/sys/fs/cgroup/cpu.max') as f:
+            quota, period = f.read().split()
+        if quota != 'max':
+            return max(1, int(quota) // int(period))
+    except (OSError, ValueError):
+        pass
+    return len(os.sched_getaffinity(0))
+
+
+def available_memory():
+    try:
+        with open('/sys/fs/cgroup/memory.max') as f:
+            raw = f.read().strip()
+        if raw != 'max':
+            return int(raw)
+    except (OSError, ValueError):
+        pass
+    with open('/proc/meminfo') as f:
+        for line in f:
+            if line.startswith('MemTotal:'):
+                return int(line.split()[1]) * 1024
+    die('no se pudo determinar la memoria disponible')
+
+
+def workers():
+    value = env('WORKERS', 'auto')
+    if value != 'auto':
+        if not value.isdigit() or int(value) < 1:
+            die('WORKERS debe ser "auto" o un entero >= 1 (el websocket necesita modo multiproceso)')
+        return value
+
+    cpus = available_cpus()
+    memory = available_memory()
+    ram_share = float(env('ODOO_RAM_SHARE', '0.5'))
+    # Estimación oficial: 80 % de peticiones ligeras (~150 MB) y 20 % pesadas (~1 GB).
+    per_worker = int(0.8 * 150 * MIB + 0.2 * 1024 * MIB)
+    by_cpu = cpus * 2 + 1
+    by_ram = int(memory * ram_share // per_worker)
+    result = max(2, min(by_cpu, by_ram))
+    info(f'WORKERS=auto: {cpus} CPU, {memory // MIB} MiB RAM '
+         f'-> límite por CPU {by_cpu}, por RAM {by_ram} -> {result} workers')
+    return str(result)
+
+
+def has_modules(path):
+    try:
+        return any(os.path.isfile(os.path.join(path, entry, '__manifest__.py')) for entry in os.listdir(path))
+    except OSError:
+        return False
+
+
+def addons_path():
+    paths = []
+    try:
+        with open(os.path.join(ADDONS_ROOT, 'addons_path')) as f:
+            paths += [p for p in f.read().strip().split(',') if p]
+    except OSError:
+        pass
+    if has_modules(EXTRA_ADDONS):
+        paths.append(EXTRA_ADDONS)
+    paths += [p for p in env('ODOO_EXTRA_ADDONS_PATH').split(',') if p]
+    return ','.join(paths)
+
+
+def main():
+    db_name = required('DB_NAME')
+    admin_passwd = required('ADMIN_PASSWD')
+    if admin_passwd.lower() in WEAK_PASSWORDS or len(admin_passwd) < 16:
+        die('ADMIN_PASSWD es débil: usa al menos 16 caracteres aleatorios')
+
+    options = {
+        'data_dir': '/var/lib/odoo',
+        'addons_path': addons_path(),
+        # Base de datos
+        'db_host': env('PGHOST', 'db'),
+        'db_port': env('PGPORT', '5432'),
+        'db_user': env('PGUSER', 'odoo'),
+        'db_password': required('PGPASSWORD'),
+        'db_sslmode': env('PGSSLMODE', 'prefer'),
+        'db_name': db_name,
+        'dbfilter': env('DB_FILTER', f'^{re.escape(db_name)}$'),
+        'db_maxconn': env('DB_MAXCONN'),
+        # Seguridad
+        'list_db': env('LIST_DB', 'False'),
+        'admin_passwd': admin_passwd,
+        # HTTP: Odoo 20 escucha en 127.0.0.1 por defecto; dentro del contenedor
+        # hay que abrirlo a la red interna para que llegue el proxy.
+        'proxy_mode': 'True',
+        'http_interface': '0.0.0.0',
+        'http_port': '8069',
+        'gevent_port': '8072',
+        # Procesos y límites (ejemplo oficial de producción)
+        'workers': workers(),
+        'max_cron_threads': env('MAX_CRON_THREADS', '1'),
+        'limit_memory_soft': env('LIMIT_MEMORY_SOFT', '629145600'),
+        'limit_memory_hard': env('LIMIT_MEMORY_HARD', '1677721600'),
+        'limit_time_cpu': env('LIMIT_TIME_CPU', '600'),
+        'limit_time_real': env('LIMIT_TIME_REAL', '1200'),
+        'limit_request': env('LIMIT_REQUEST', '8192'),
+        'server_wide_modules': env('SERVER_WIDE_MODULES', 'base,web'),
+        'log_level': env('LOG_LEVEL', 'info'),
+        # Correo saliente a nivel de servidor (opcional)
+        'smtp_server': env('SMTP_SERVER'),
+        'smtp_port': env('SMTP_PORT', '587') if env('SMTP_SERVER') else '',
+        'smtp_ssl': env('SMTP_SSL', 'True') if env('SMTP_SERVER') else '',
+        'smtp_user': env('SMTP_USER'),
+        'smtp_password': env('SMTP_PASSWORD'),
+        'email_from': env('EMAIL_FROM'),
+        'from_filter': env('SMTP_FROM_FILTER'),
+    }
+
+    for key, value in os.environ.items():
+        if key.startswith('ODOO_OPT_') and value.strip():
+            options[key.removeprefix('ODOO_OPT_').lower()] = value.strip()
+
+    lines = ['[options]'] + [f'{key} = {value}' for key, value in options.items() if value]
+    path = env('ODOO_RC', '/etc/odoo/odoo.conf')
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, 'w') as f:
+        f.write('\n'.join(lines) + '\n')
+    os.chmod(path, 0o600)
+    info(f'{path} generado (workers={options["workers"]}, db={db_name}).')
+
+
+if __name__ == '__main__':
+    main()

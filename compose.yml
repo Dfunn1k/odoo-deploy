@@ -1,0 +1,123 @@
+name: odoo
+
+services:
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      DOMAIN: ${DOMAIN:?Define DOMAIN en .env}
+      ACME_EMAIL: ${ACME_EMAIL:?Define ACME_EMAIL en .env}
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    networks:
+      - edge
+    logging: &default-logging
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
+
+  odoo:
+    image: odoo-prod:${IMAGE_TAG:-current}
+    build:
+      context: .
+      dockerfile: image/Dockerfile
+      args:
+        ODOO_VERSION: ${ODOO_VERSION:-20.0}
+        ODOO_RELEASE: ${ODOO_RELEASE:?Define ODOO_RELEASE en .env}
+        ODOO_ENTERPRISE: ${ODOO_ENTERPRISE:-false}
+        ODOO_ENTERPRISE_REF: ${ODOO_ENTERPRISE_REF:-}
+      secrets:
+        - github_token
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PGHOST: db
+      PGPORT: "5432"
+      PGUSER: ${ODOO_DB_USER:-odoo}
+      PGPASSWORD: ${ODOO_DB_PASSWORD:?Define ODOO_DB_PASSWORD en .env}
+      DB_NAME: ${DB_NAME:?Define DB_NAME en .env}
+      ADMIN_PASSWD: ${ADMIN_PASSWD:?Define ADMIN_PASSWD en .env}
+      ODOO_BASE_URL: https://${DOMAIN}
+      ODOO_ADMIN_LOGIN: ${ODOO_ADMIN_LOGIN:?Define ODOO_ADMIN_LOGIN en .env}
+      ODOO_ADMIN_PASSWORD: ${ODOO_ADMIN_PASSWORD:?Define ODOO_ADMIN_PASSWORD en .env}
+      ODOO_INIT_LANG: ${ODOO_INIT_LANG:-en_US}
+      ODOO_INIT_MODULES: ${ODOO_INIT_MODULES:-}
+      WORKERS: ${WORKERS:-auto}
+      ODOO_RAM_SHARE: ${ODOO_RAM_SHARE:-0.5}
+      MAX_CRON_THREADS: ${MAX_CRON_THREADS:-1}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      SMTP_SERVER: ${SMTP_SERVER:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_SSL: ${SMTP_SSL:-True}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      EMAIL_FROM: ${EMAIL_FROM:-}
+      SMTP_FROM_FILTER: ${SMTP_FROM_FILTER:-}
+    volumes:
+      - odoo-data:/var/lib/odoo
+    networks:
+      - edge
+      - backend
+    stop_grace_period: 60s
+    # journald: fail2ban lee de aquí los intentos de login fallidos, y los logs
+    # sobreviven a que se recree el contenedor. `docker compose logs` sigue funcionando.
+    logging:
+      driver: journald
+      options:
+        tag: odoo
+
+  db:
+    # Postgres 17 oficial + extensión pgvector (necesaria para las funciones de IA de Odoo 20).
+    image: pgvector/pgvector:0.8.7-pg17
+    restart: unless-stopped
+    shm_size: 256mb
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Define POSTGRES_PASSWORD en .env}
+      ODOO_DB_USER: ${ODOO_DB_USER:-odoo}
+      ODOO_DB_PASSWORD: ${ODOO_DB_PASSWORD}
+    command: >-
+      postgres
+      -c max_connections=${PG_MAX_CONNECTIONS:-200}
+      -c shared_buffers=${PG_SHARED_BUFFERS:-512MB}
+      -c effective_cache_size=${PG_EFFECTIVE_CACHE_SIZE:-1536MB}
+      -c work_mem=${PG_WORK_MEM:-16MB}
+      -c maintenance_work_mem=${PG_MAINTENANCE_WORK_MEM:-256MB}
+      -c random_page_cost=1.1
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+      - ./postgres/initdb:/docker-entrypoint-initdb.d:ro
+    networks:
+      - backend
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    logging: *default-logging
+
+networks:
+  # edge: Caddy <-> Odoo, con salida a Internet (SMTP, IAP, etc.).
+  edge: {}
+  # backend: Odoo <-> Postgres, sin salida a Internet.
+  backend:
+    internal: true
+
+volumes:
+  odoo-data:
+  pg-data:
+  caddy-data:
+  caddy-config:
+
+secrets:
+  github_token:
+    file: ./secrets/github_token

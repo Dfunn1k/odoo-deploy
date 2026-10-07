@@ -1,0 +1,11 @@
+# Bloquea 15 minutos una IP con 10 logins fallidos en 1 minuto (valores de la guía oficial).
+# chain=DOCKER-USER: el tráfico hacia contenedores no pasa por INPUT, así que el
+# bloqueo tiene que ir en la cadena que Docker reserva para reglas del usuario.
+[odoo-login]
+enabled  = true
+backend  = systemd
+filter   = odoo-login
+maxretry = 10
+findtime = 60
+bantime  = 900
+action   = iptables-multiport[name=odoo-login, port="http,https", protocol=tcp, chain=DOCKER-USER]

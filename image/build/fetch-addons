@@ -1,0 +1,118 @@
+#!/usr/bin/env bash
+# Descarga Odoo Enterprise (opcional) y los repos de addons declarados en repos.txt.
+#
+# Solo se ejecuta durante el build. El token de GitHub llega como secreto de BuildKit
+# y se usa como cabecera HTTP: nunca queda escrito en .git/config ni en la imagen.
+#
+# Uso: fetch-addons <repos.txt> <directorio-salida>
+#
+# Variables (build args): ODOO_VERSION, ODOO_RELEASE, ODOO_ENTERPRISE, ODOO_ENTERPRISE_REF
+# Salida:
+#   <out>/enterprise/            Odoo Enterprise (si ODOO_ENTERPRISE=true)
+#   <out>/repos/<owner>__<repo>/ Un directorio por repo de repos.txt
+#   <out>/custom/                Módulos locales (copiados antes por el Dockerfile)
+#   <out>/addons_path            addons_path calculado (separado por comas)
+#   <out>/MANIFEST               URL, rama y commit exacto de cada repo descargado
+set -euo pipefail
+
+repos_file=$1
+out=$2
+token_file=${GITHUB_TOKEN_FILE:-/run/secrets/github_token}
+
+log() {
+    echo "[fetch-addons] $*" >&2
+}
+
+die() {
+    log "ERROR: $*"
+    exit 1
+}
+
+: "${ODOO_VERSION:?ODOO_VERSION no definido}"
+: "${ODOO_RELEASE:?ODOO_RELEASE no definido}"
+
+git_auth=()
+if [[ -s "$token_file" ]]; then
+    token=$(tr -d '[:space:]' < "$token_file")
+    basic=$(printf 'x-access-token:%s' "$token" | base64 -w0)
+    git_auth=(-c "http.https://github.com/.extraheader=AUTHORIZATION: basic $basic")
+    log 'Token de GitHub disponible para repos privados.'
+fi
+
+mkdir -p "$out/repos" "$out/custom"
+: > "$out/MANIFEST"
+
+# clone-at <url> <rama> <ref> <destino>
+#   ref vacío         -> último commit de la rama
+#   ref "before:FECHA" -> último commit anterior a FECHA
+#   ref "<sha>"        -> ese commit
+clone-at() {
+    local url=$1
+    local branch=$2
+    local ref=$3
+    local dest=$4
+    local sha
+
+    if [[ "$url" != https://* ]]; then
+        die "$url: usa URLs https:// (la autenticación es por token, no por SSH)."
+    fi
+
+    log "Clonando $url (rama $branch)..."
+    # --filter=tree:0 descarga solo commits; el contenido se baja al hacer checkout.
+    if ! git "${git_auth[@]}" clone --quiet --filter=tree:0 --no-checkout \
+            --single-branch --branch "$branch" "$url" "$dest"; then
+        die "No se pudo clonar $url. ¿Existe la rama '$branch'? ¿El token tiene acceso al repo?"
+    fi
+
+    case "$ref" in
+        '') sha=$(git -C "$dest" rev-parse HEAD) ;;
+        before:*) sha=$(git -C "$dest" rev-list -n 1 --before="${ref#before:}" HEAD) ;;
+        *) sha=$ref ;;
+    esac
+    [[ -n "$sha" ]] || die "No se pudo resolver el commit '$ref' en $url."
+
+    git "${git_auth[@]}" -C "$dest" -c advice.detachedHead=false checkout --quiet "$sha" \
+        || die "No se pudo hacer checkout de $sha en $url."
+
+    printf '%s %s %s\n' "$url" "$branch" "$(git -C "$dest" rev-parse HEAD)" >> "$out/MANIFEST"
+    rm -rf "$dest/.git"
+}
+
+# --- Odoo Enterprise ---------------------------------------------------------
+if [[ "${ODOO_ENTERPRISE,,}" == 'true' ]]; then
+    (( ${#git_auth[@]} > 0 )) \
+        || die 'ODOO_ENTERPRISE=true requiere un token con acceso a github.com/odoo/enterprise.'
+
+    # Compatibilidad con Community: la imagen oficial odoo:<versión>-<fecha> se construye
+    # con el nightly de esa fecha (sale de madrugada UTC). Se toma el último commit de
+    # Enterprise ANTERIOR a ese día: queda a lo sumo unas horas por detrás de Community,
+    # nunca por delante. Se puede fijar a mano con ODOO_ENTERPRISE_REF.
+    release_date="${ODOO_RELEASE:0:4}-${ODOO_RELEASE:4:2}-${ODOO_RELEASE:6:2}"
+    enterprise_ref=${ODOO_ENTERPRISE_REF:-"before:${release_date} 00:00:00 +0000"}
+    clone-at https://github.com/odoo/enterprise.git "$ODOO_VERSION" "$enterprise_ref" "$out/enterprise"
+fi
+
+# --- Repos de addons ---------------------------------------------------------
+while read -r url branch ref _; do
+    [[ -z "$url" || "$url" == \#* ]] && continue
+    url=${url%/}
+    name=$(basename "${url%.git}")
+    owner=$(basename "$(dirname "$url")")
+    clone-at "$url" "${branch:-$ODOO_VERSION}" "$ref" "$out/repos/${owner}__${name}"
+done < "$repos_file"
+
+# --- addons_path ---------------------------------------------------------------
+# Enterprise primero; después, cada directorio que contenga módulos (carpetas con
+# __manifest__.py), incluidos los anidados hasta 2 niveles dentro de cada repo.
+{
+    if [[ -d "$out/enterprise" ]]; then
+        echo "$out/enterprise"
+    fi
+    find "$out/repos" "$out/custom" -mindepth 2 -maxdepth 4 -name __manifest__.py -printf '%h\n' \
+        | xargs -r -n1 dirname \
+        | sort -u
+} | paste -sd, > "$out/addons_path"
+
+log "MANIFEST:"
+sed 's/^/  /' "$out/MANIFEST" >&2
+log "addons_path: $(cat "$out/addons_path")"

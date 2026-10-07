@@ -1,0 +1,32 @@
+{
+	email {$ACME_EMAIL}
+}
+
+# Caddy obtiene y renueva solo el certificado de Let's Encrypt para {$DOMAIN}.
+# Requisito: el registro DNS A del dominio debe apuntar a la IP de este servidor
+# y los puertos 80 y 443 deben estar abiertos.
+{$DOMAIN} {
+	encode zstd gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		-Server
+	}
+
+	# Gestor de bases de datos: nunca expuesto a Internet (recomendación oficial).
+	@dbmanager path /web/database /web/database/*
+	handle @dbmanager {
+		respond 404
+	}
+
+	# Tiempo real (chat, notificaciones): al worker gevent de Odoo.
+	handle /websocket* {
+		reverse_proxy odoo:8072
+	}
+
+	handle {
+		reverse_proxy odoo:8069
+	}
+}

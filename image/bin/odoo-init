@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+# Inicializa la base de producción. Es idempotente: si la base ya existe, solo
+# reaplica los parámetros del sistema (web.base.url).
+#
+# Variables: DB_NAME, ODOO_ADMIN_LOGIN, ODOO_ADMIN_PASSWORD, ODOO_INIT_LANG,
+#            ODOO_INIT_MODULES, ODOO_BASE_URL
+set -euo pipefail
+source odoo-lib
+
+db=${DB_NAME:?falta DB_NAME}
+wait-for-db
+
+if db-initialized "$db"; then
+    log "La base '$db' ya está inicializada."
+else
+    : "${ODOO_ADMIN_LOGIN:?falta ODOO_ADMIN_LOGIN}"
+    : "${ODOO_ADMIN_PASSWORD:?falta ODOO_ADMIN_PASSWORD}"
+    [[ "$ODOO_ADMIN_LOGIN" != 'admin' ]] || die "ODOO_ADMIN_LOGIN no puede ser 'admin'."
+
+    modules="base${ODOO_INIT_MODULES:+,$ODOO_INIT_MODULES}"
+    lang=${ODOO_INIT_LANG:-en_US}
+
+    log "Creando la base '$db' con módulos: $modules (idioma $lang, sin datos demo)..."
+    run-checked odoo -d "$db" -i "$modules" --load-language "$lang" --stop-after-init --no-http
+
+    log 'Configurando el usuario administrador...'
+    # Los valores se leen desde os.environ dentro de Python: así no se interpolan
+    # en el código y cualquier carácter en la contraseña es seguro.
+    run-checked odoo shell -d "$db" --no-http --log-level=warn <<'PY'
+import os
+admin = env.ref('base.user_admin')
+admin.write({
+    'login': os.environ['ODOO_ADMIN_LOGIN'],
+    'password': os.environ['ODOO_ADMIN_PASSWORD'],
+    'lang': os.environ.get('ODOO_INIT_LANG') or 'en_US',
+})
+env.cr.commit()
+print(f"Administrador: {admin.login}")
+PY
+fi
+
+if [[ -n "${ODOO_BASE_URL:-}" ]]; then
+    log "Fijando web.base.url = $ODOO_BASE_URL"
+    run-checked odoo shell -d "$db" --no-http --log-level=warn <<'PY'
+import os
+params = env['ir.config_parameter'].sudo()
+params.set_param('web.base.url', os.environ['ODOO_BASE_URL'])
+params.set_param('web.base.url.freeze', 'True')
+env.cr.commit()
+PY
+fi
+
+log 'Listo.'
