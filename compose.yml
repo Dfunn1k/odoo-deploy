@@ -13,6 +13,7 @@ services:
       ACME_EMAIL: ${ACME_EMAIL:?Define ACME_EMAIL en .env}
     volumes:
       - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./caddy/sites:/etc/caddy/sites:ro
       - caddy-data:/data
       - caddy-config:/config
     networks:
@@ -65,8 +66,11 @@ services:
     volumes:
       - odoo-data:/var/lib/odoo
     networks:
-      - edge
-      - backend
+      edge:
+        # Nombre único para Caddy: "odoo" puede chocar con otros stacks unidos a Caddy.
+        aliases:
+          - odoo-app
+      backend: {}
     stop_grace_period: 60s
     # journald: fail2ban lee de aquí los intentos de login fallidos, y los logs
     # sobreviven a que se recree el contenedor. `docker compose logs` sigue funcionando.

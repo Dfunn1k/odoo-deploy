@@ -218,6 +218,23 @@ Al terminar, entra en `https://<dominio>` con el login y la contraseña que most
 Para copiarlos fuera del servidor (muy recomendado): configura un destino con `rclone config`
 (S3, Backblaze B2, Google Drive, otro servidor por SFTP...) y ponlo en `BACKUP_RCLONE_REMOTE` del `.env`.
 
+## Detrás de Cloudflare
+
+Si el dominio pasa por Cloudflare (nube naranja):
+
+- En Cloudflare, **SSL/TLS → modo Full (strict)**. Caddy obtiene su certificado por HTTP-01 (puerto 80),
+  que sí atraviesa Cloudflare; el reto TLS-ALPN está desactivado en el `Caddyfile` porque no llega.
+- El `Caddyfile` solo acepta la IP real del cliente (`CF-Connecting-IP`) cuando la conexión viene de
+  una IP de Cloudflare. Si Cloudflare publica rangos nuevos, actualízalos en `trusted_proxies`.
+- La jail `odoo-login` de fail2ban no sirve: las conexiones llegan desde IPs de Cloudflare y bloquear
+  la IP real con iptables no tiene efecto. Usa el WAF / rate limiting de Cloudflare.
+
+### Sitios extra en el mismo servidor
+
+Caddy carga además `caddy/sites/*.caddy`. Para enrutar otro stack (p. ej. el QA de Odoo 19), crea
+ahí su bloque, une Caddy a la red de ese stack con un override de compose (ver `compose.qa19.yml`)
+y actívalo con `COMPOSE_FILE=compose.yml:compose.qa19.yml` en el `.env`.
+
 ## Operación
 
 | Tarea | Comando |

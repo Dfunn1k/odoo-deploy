@@ -44,8 +44,8 @@ if [[ -n "${ODOO_BASE_URL:-}" ]]; then
     run-checked odoo shell -d "$db" --no-http --log-level=warn <<'PY'
 import os
 params = env['ir.config_parameter'].sudo()
-params.set_param('web.base.url', os.environ['ODOO_BASE_URL'])
-params.set_param('web.base.url.freeze', 'True')
+params.set_str('web.base.url', os.environ['ODOO_BASE_URL'])
+params.set_bool('web.base.url.freeze', True)
 env.cr.commit()
 PY
 fi

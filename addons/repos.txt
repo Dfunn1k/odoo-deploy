@@ -16,3 +16,5 @@
 # https://github.com/OCA/web              20.0   046ebfeb332b2c80be491bc860e790bb9c5b3e6d
 # https://github.com/OCA/l10n-peru        20.0
 # https://github.com/Dfunn1k/odoo-addons  20.0
+
+https://github.com/Dfunn1k/odoo-addons.git  20.0  ac4dff75928e3120d38667bca50ab641076ad5de

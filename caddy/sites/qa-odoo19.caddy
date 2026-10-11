@@ -1,0 +1,23 @@
+# QA de Odoo 19 (stack aparte en ~/odoo19-platform/qa). TEMPORAL: para retirarlo,
+# borra este archivo, quita compose.qa19.yml de COMPOSE_FILE en .env y ejecuta
+# docker compose up -d caddy.
+develop-odooerp.cuevacorporacion.com {
+	import acme_http01
+	encode zstd gzip
+
+	header {
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		-Server
+	}
+
+	@dbmanager path /web/database /web/database/*
+	handle @dbmanager {
+		respond 404
+	}
+
+	# QA corre con workers=0: el websocket lo atiende el mismo puerto HTTP.
+	handle {
+		reverse_proxy odoo-qa:8069
+	}
+}

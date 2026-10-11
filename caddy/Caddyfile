@@ -1,11 +1,29 @@
 {
 	email {$ACME_EMAIL}
+	servers {
+		# Cloudflare va delante (proxy naranja): solo sus IPs pueden indicar la IP real
+		# del cliente. Mantener sincronizado con https://www.cloudflare.com/ips/.
+		trusted_proxies static 173.245.48.0/20 103.21.244.0/22 103.22.200.0/22 103.31.4.0/22 141.101.64.0/18 108.162.192.0/18 190.93.240.0/20 188.114.96.0/20 197.234.240.0/22 198.41.128.0/17 162.158.0.0/15 104.16.0.0/13 104.24.0.0/14 172.64.0.0/13 131.0.72.0/22 2400:cb00::/32 2606:4700::/32 2803:f800::/32 2405:b500::/32 2405:8100::/32 2a06:98c0::/29 2c0f:f248::/32
+		trusted_proxies_strict
+		client_ip_headers CF-Connecting-IP X-Forwarded-For
+	}
+}
+
+# Con Cloudflare delante, el reto TLS-ALPN nunca llega a Caddy: se usa solo HTTP-01
+# (puerto 80). Sin Cloudflare también funciona.
+(acme_http01) {
+	tls {
+		issuer acme {
+			disable_tlsalpn_challenge
+		}
+	}
 }
 
 # Caddy obtiene y renueva solo el certificado de Let's Encrypt para {$DOMAIN}.
 # Requisito: el registro DNS A del dominio debe apuntar a la IP de este servidor
 # y los puertos 80 y 443 deben estar abiertos.
 {$DOMAIN} {
+	import acme_http01
 	encode zstd gzip
 
 	header {
@@ -23,10 +41,13 @@
 
 	# Tiempo real (chat, notificaciones): al worker gevent de Odoo.
 	handle /websocket* {
-		reverse_proxy odoo:8072
+		reverse_proxy odoo-app:8072
 	}
 
 	handle {
-		reverse_proxy odoo:8069
+		reverse_proxy odoo-app:8069
 	}
 }
+
+# Sitios extra de este servidor (p. ej. un QA de otra versión). Ver caddy/sites/.
+import /etc/caddy/sites/*.caddy

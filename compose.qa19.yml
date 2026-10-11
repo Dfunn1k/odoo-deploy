@@ -1,0 +1,11 @@
+# TEMPORAL: Caddy también sirve el QA de Odoo 19 (ver caddy/sites/qa-odoo19.caddy).
+# Se activa en .env con: COMPOSE_FILE=compose.yml:compose.qa19.yml
+services:
+  caddy:
+    networks:
+      - qa19
+
+networks:
+  qa19:
+    name: odoo19-qa-frontend
+    external: true
